@@ -1,0 +1,14 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    container_name: langchain-rag-system
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"   # REST API + web dashboard (/dashboard)
+      - "127.0.0.1:6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  qdrant_data:
+    name: langchain-rag-system_data

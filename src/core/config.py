@@ -27,6 +27,10 @@ class Settings:
     openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     default_model: str = os.getenv("DEFAULT_MODEL", "openai/gpt-oss-20b")
     default_embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    qdrant_url: str = os.getenv("QDRANT_URL", "http://localhost:6333")
+    qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "langchain_rag")
+    chunk_size: int = int(os.getenv("CHUNK_SIZE", "800"))
+    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "100"))
     base_dir: Path = BASE_DIR
 
     def resolve_doc_path(self, filename: str = "sample.pdf") -> Path:
