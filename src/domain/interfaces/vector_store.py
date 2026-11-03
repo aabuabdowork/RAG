@@ -6,7 +6,11 @@ from src.domain.entities import DocumentEmbedding
 
 class IVectorStore(ABC):
     @abstractmethod
-    def ensure_collection(self, dimension: int) -> None:
+    def exists(self, doc_hash: str) -> bool:
+        pass
+
+    @abstractmethod
+    def delete_by_file(self, file_name: str) -> int:
         pass
 
     @abstractmethod

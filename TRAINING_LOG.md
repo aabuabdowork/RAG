@@ -9,13 +9,13 @@ A step-by-step record of what we built, why, and what we learned.
 A document pipeline built with **clean architecture**:
 
 ```
-PDF ──► Extract ──► Chunk ──► Embed ──► Index (Qdrant) ──► LLM Summary
+doc/*.pdf ──► Hash check ──► Extract ──► Chunk ──► Embed ──► Index (Qdrant)
 ```
 
 | Layer | Folder | Role |
 |---|---|---|
 | Domain | `src/domain` | Entities + interfaces (contracts). No external libraries. |
-| Application | `src/application/use_cases` | Use cases: extract, embed, index, analyze. |
+| Application | `src/application/use_cases` | Use cases: extract, embed, ingest (document/folder), analyze. |
 | Infrastructure | `src/infrastructure` | Adapters: PyPDF, HuggingFace, Qdrant, OpenRouter, splitter. |
 | Core | `src/core` | Settings / `.env` config. |
 | Composition Root | `main.py` | Wires everything together and runs it. |
@@ -140,6 +140,72 @@ docker compose down      # stop
 
 ---
 
+## Step 6 — Folder Ingestion + Duplicate Detection (2026-11-03)
+
+**What:** `python main.py` now ingests **every PDF in `doc/`** and skips anything already indexed.
+
+**Flow per file**
+```
+hash = sha256(file bytes)
+same hash in Qdrant?              → skipped
+same file name, different hash?   → delete old points → re-index → updated
+otherwise                         → indexed
+no text extracted                 → empty
+error                             → failed (reason), other files continue
+```
+
+**Files**
+- `src/application/use_cases/ingest_document.py` — one file → status (the core; upload will reuse it)
+- `src/application/use_cases/ingest_folder.py` — loops `doc/*.pdf`, calls the above
+- `src/domain/interfaces/vector_store.py` — added `exists(doc_hash)`, `delete_by_file(file_name)`
+- `src/infrastructure/vectorstores/qdrant_store.py` — collection created on start, keyword indexes on `doc_hash` + `file_name`
+- `src/core/config.py` — `DOCS_DIR` (default `doc/`)
+- `main.py` — wires ingestion, prints per-file status + summary
+- Removed `index_document.py` (replaced by ingest)
+
+**Why content hash, not file name/path**
+| Check by | Problem |
+|---|---|
+| File name | Rename → duplicate; edit with same name → wrongly skipped |
+| Path | Move → duplicate |
+| **SHA-256 of content** ✅ | Same content = same hash, regardless of name/location |
+
+**Key points**
+- Hash check happens **before** extract/embed → no wasted compute.
+- Point ID = `uuid5(doc_hash + page + chunk)` → same content always maps to same IDs.
+- **Payload index** = like a DB index; makes filtering by `doc_hash` fast.
+
+**Verified**
+| Run | Scenario | Result |
+|---|---|---|
+| 1 | Fresh | `indexed` |
+| 2 | Re-run | `skipped` |
+| 3 | Copy with new name | `skipped` (same hash) |
+| 4–6 | Same name, edited content | `updated`, point count unchanged (no duplicates) |
+
+**Known limits**
+- Two different files with the **same name** in different folders would replace each other (fine for one flat `doc/` folder).
+- Renamed file is skipped, but payload keeps the old `file_name`.
+- Deleting a file from `doc/` does not remove its points yet.
+
+---
+
+## Step 7 — Second Sample Document (2026-11-03)
+
+**What:** Added `doc/remote_work_policy.pdf`, a fictional 3-page HR policy (Falcon Tech), generated with `reportlab`.
+
+**Why:** A realistic, fact-rich document to test chunking now and RAG questions later.
+
+**Result:** each page is ~820–960 chars → **2 chunks per page** → 6 points (+1 from `sample.pdf` = 7 total). `sample.pdf` was `skipped`.
+
+**Good test questions for the retrieval step**
+- How many remote days per week are allowed?
+- What are the core hours?
+- How much is the home office allowance?
+- Where do I report a data leak?
+
+---
+
 ## Glossary
 
 | Term | Meaning |
@@ -163,4 +229,6 @@ docker compose down      # stop
 - [ ] Retrieval: embed a user question → search Qdrant → top-k chunks.
 - [ ] RAG answer: send retrieved chunks + question to the LLM.
 - [ ] Arabic documents → switch to a multilingual embedding model (MiniLM is English-only).
-- [ ] Re-indexing a shorter document leaves old chunks behind → delete by `source` before upsert.
+- [x] Re-indexing an edited document leaves old chunks behind → solved in Step 6 (delete by `file_name`).
+- [ ] Sync deletions: remove points for files no longer in `doc/`.
+- [ ] Upload API (FastAPI): `POST /documents`, `GET /documents/{id}`, background processing, `documents` registry table (status: pending → processing → done/failed).

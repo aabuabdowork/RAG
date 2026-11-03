@@ -32,6 +32,7 @@ class Settings:
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "800"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "100"))
     base_dir: Path = BASE_DIR
+    docs_dir: Path = Path(os.getenv("DOCS_DIR", BASE_DIR / "doc"))
 
     def resolve_doc_path(self, filename: str = "sample.pdf") -> Path:
         for candidate in [self.base_dir / filename, self.base_dir / "doc" / filename]:
