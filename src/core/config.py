@@ -31,10 +31,15 @@ class Settings:
     qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "langchain_rag")
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "800"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "100"))
-    top_k: int = int(os.getenv("TOP_K", "3"))
+    top_k: int = int(os.getenv("TOP_K", "5"))
     min_score: float = float(os.getenv("MIN_SCORE", "0.3"))
     search_mode: str = os.getenv("SEARCH_MODE", "hybrid")
     prefetch_limit: int = int(os.getenv("PREFETCH_LIMIT", "20"))
+    token_encoding: str = os.getenv("TOKEN_ENCODING", "o200k_base")
+    max_question_tokens: int = int(os.getenv("MAX_QUESTION_TOKENS", "200"))
+    max_context_tokens: int = int(os.getenv("MAX_CONTEXT_TOKENS", "1500"))
+    max_output_tokens: int = int(os.getenv("MAX_OUTPUT_TOKENS", "500"))
+    max_top_k: int = int(os.getenv("MAX_TOP_K", "10"))
     base_dir: Path = BASE_DIR
     docs_dir: Path = Path(os.getenv("DOCS_DIR", BASE_DIR / "departments"))
 

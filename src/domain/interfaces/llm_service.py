@@ -6,7 +6,7 @@ class ILLMService(ABC):
     """Abstract interface for LLM interactions."""
 
     @abstractmethod
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, system: str = "") -> str:
         """Generate a response given a text prompt."""
         pass
 

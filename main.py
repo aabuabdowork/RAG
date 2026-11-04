@@ -1,5 +1,8 @@
 import argparse
 from collections import Counter
+from typing import Any, Dict, List
+
+from langsmith import traceable
 
 from src.application.use_cases.ask_question import AskQuestionUseCase
 from src.application.use_cases.embed_document import EmbedDocumentUseCase
@@ -7,15 +10,22 @@ from src.application.use_cases.ingest_document import IngestDocumentUseCase
 from src.application.use_cases.ingest_folder import IngestFolderUseCase
 from src.application.use_cases.search_documents import SearchDocumentsUseCase
 from src.core.config import settings
-from src.domain.entities import SearchMode, SearchResult
+from src.domain.entities import Answer, SearchMode, SearchResult
+from src.domain.exceptions import BudgetExceededError
 from src.infrastructure.embeddings.huggingface_service import HuggingFaceEmbeddingService
 from src.infrastructure.llm.openrouter_service import OpenRouterLLMService
 from src.infrastructure.loaders.pypdf_loader import PyPDFDocumentLoader
 from src.infrastructure.splitters.recursive_splitter import RecursiveTextSplitter
+from src.infrastructure.tokenizers.tiktoken_counter import TiktokenCounter
 from src.infrastructure.vectorstores.qdrant_store import QdrantVectorStore
 
 
-def ingest(embedder: HuggingFaceEmbeddingService, store: QdrantVectorStore) -> None:
+def command_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    return vars(inputs["args"])
+
+
+@traceable(name="ingest", run_type="chain", process_inputs=lambda inputs: {"folder": str(settings.docs_dir)})
+def ingest(embedder: HuggingFaceEmbeddingService, store: QdrantVectorStore) -> Dict[str, str]:
     embed = EmbedDocumentUseCase(
         loader=PyPDFDocumentLoader(),
         splitter=RecursiveTextSplitter(),
@@ -31,9 +41,11 @@ def ingest(embedder: HuggingFaceEmbeddingService, store: QdrantVectorStore) -> N
     summary = Counter(status.split(" ")[0] for status in results.values())
     print(f"\nSummary: {dict(summary)}")
     print(f"Points in '{settings.qdrant_collection}': {store.count()}")
+    return results
 
 
-def search(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> None:
+@traceable(name="search", run_type="chain", process_inputs=command_inputs)
+def search(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> List[SearchResult]:
     results = search_documents.execute(
         args.query, args.top_k, args.min_score, args.department, SearchMode(args.mode)
     )
@@ -41,14 +53,21 @@ def search(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -
     print_header("Search", args)
     if not results:
         print("No relevant results found.")
-        return
     for rank, result in enumerate(results, start=1):
         print(f"\n{describe(rank, result)}")
         print(f"   {' '.join(result.text.split())[:300]}")
+    return results
 
 
-def ask(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> None:
-    ask_question = AskQuestionUseCase(search=search_documents, llm=OpenRouterLLMService())
+@traceable(name="ask", run_type="chain", process_inputs=command_inputs)
+def ask(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> Answer:
+    ask_question = AskQuestionUseCase(
+        search=search_documents,
+        llm=OpenRouterLLMService(),
+        counter=TiktokenCounter(),
+        max_question_tokens=settings.max_question_tokens,
+        max_context_tokens=settings.max_context_tokens,
+    )
     answer = ask_question.execute(
         args.query, args.top_k, args.min_score, args.department, SearchMode(args.mode)
     )
@@ -59,6 +78,8 @@ def ask(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> N
         print("\nSources:")
         for rank, source in enumerate(answer.sources, start=1):
             print(describe(rank, source))
+    print("\nTokens: " + " | ".join(f"{part} {count}" for part, count in answer.tokens.items()))
+    return answer
 
 
 def print_header(command: str, args: argparse.Namespace) -> None:
@@ -102,11 +123,16 @@ def main() -> None:
         ingest(embedder, store)
         return
 
-    search_documents = SearchDocumentsUseCase(embedder=embedder, store=store)
-    if args.command == "search":
-        search(search_documents, args)
-    else:
-        ask(search_documents, args)
+    search_documents = SearchDocumentsUseCase(
+        embedder=embedder, store=store, max_top_k=settings.max_top_k
+    )
+    try:
+        if args.command == "search":
+            search(search_documents, args)
+        else:
+            ask(search_documents, args)
+    except BudgetExceededError as error:
+        print(f"Rejected: {error}")
 
 
 if __name__ == "__main__":

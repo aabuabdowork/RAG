@@ -6,3 +6,5 @@ python-dotenv
 sentence-transformers
 qdrant-client
 langchain-text-splitters
+tiktoken
+langsmith

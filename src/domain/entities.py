@@ -48,6 +48,7 @@ class SearchResult:
 class Answer:
     text: str
     sources: List[SearchResult]
+    tokens: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

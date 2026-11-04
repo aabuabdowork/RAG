@@ -13,6 +13,7 @@ class OpenRouterLLMService(ILLMService):
         model: str = settings.default_model,
         base_url: str = settings.openrouter_base_url,
         api_key: str = settings.openai_api_key,
+        max_tokens: int = settings.max_output_tokens,
     ) -> None:
         if not api_key:
             raise ValueError("API key must be provided in environment variables (.env).")
@@ -21,9 +22,11 @@ class OpenRouterLLMService(ILLMService):
             model=model,
             base_url=base_url,
             api_key=api_key,
+            max_tokens=max_tokens,
         )
 
-    def generate(self, prompt: str) -> str:
-        response = self._client.invoke(prompt)
+    def generate(self, prompt: str, system: str = "") -> str:
+        messages = [("system", system), ("human", prompt)] if system else [("human", prompt)]
+        response = self._client.invoke(messages)
         return str(response.content)
 

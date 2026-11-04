@@ -1,6 +1,7 @@
 import uuid
 from typing import Any, Dict, List, Optional
 
+from langsmith import traceable
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -28,6 +29,10 @@ SPARSE = "bm25"
 BM25_MODEL = "qdrant/bm25"
 
 
+def without_vectors(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: value for key, value in inputs.items() if key not in ("self", "vector")}
+
+
 class QdrantVectorStore(IVectorStore):
     def __init__(
         self,
@@ -41,6 +46,7 @@ class QdrantVectorStore(IVectorStore):
         self._prefetch_limit = prefetch_limit
         self._ensure_collection(dimension)
 
+    @traceable(name="qdrant_search", run_type="retriever", process_inputs=without_vectors)
     def search(
         self,
         query: str,
