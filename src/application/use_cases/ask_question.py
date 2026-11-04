@@ -1,7 +1,7 @@
 from typing import List, Optional
 
 from src.application.use_cases.search_documents import SearchDocumentsUseCase
-from src.domain.entities import Answer, SearchResult
+from src.domain.entities import Answer, SearchMode, SearchResult
 from src.domain.interfaces.llm_service import ILLMService
 
 NOT_FOUND = "I couldn't find this in the documents."
@@ -32,8 +32,9 @@ class AskQuestionUseCase:
         top_k: int,
         min_score: float,
         department: Optional[str] = None,
+        mode: SearchMode = SearchMode.HYBRID,
     ) -> Answer:
-        sources = self._search.execute(question, top_k, min_score, department)
+        sources = self._search.execute(question, top_k, min_score, department, mode)
         if not sources:
             return Answer(text=NOT_FOUND, sources=[])
 

@@ -7,7 +7,7 @@ from src.application.use_cases.ingest_document import IngestDocumentUseCase
 from src.application.use_cases.ingest_folder import IngestFolderUseCase
 from src.application.use_cases.search_documents import SearchDocumentsUseCase
 from src.core.config import settings
-from src.domain.entities import SearchResult
+from src.domain.entities import SearchMode, SearchResult
 from src.infrastructure.embeddings.huggingface_service import HuggingFaceEmbeddingService
 from src.infrastructure.llm.openrouter_service import OpenRouterLLMService
 from src.infrastructure.loaders.pypdf_loader import PyPDFDocumentLoader
@@ -34,7 +34,9 @@ def ingest(embedder: HuggingFaceEmbeddingService, store: QdrantVectorStore) -> N
 
 
 def search(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> None:
-    results = search_documents.execute(args.query, args.top_k, args.min_score, args.department)
+    results = search_documents.execute(
+        args.query, args.top_k, args.min_score, args.department, SearchMode(args.mode)
+    )
 
     print_header("Search", args)
     if not results:
@@ -47,7 +49,9 @@ def search(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -
 
 def ask(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> None:
     ask_question = AskQuestionUseCase(search=search_documents, llm=OpenRouterLLMService())
-    answer = ask_question.execute(args.query, args.top_k, args.min_score, args.department)
+    answer = ask_question.execute(
+        args.query, args.top_k, args.min_score, args.department, SearchMode(args.mode)
+    )
 
     print_header("Ask", args)
     print(f"\n{answer.text}")
@@ -59,7 +63,10 @@ def ask(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> N
 
 def print_header(command: str, args: argparse.Namespace) -> None:
     scope = args.department.upper() if args.department else "ALL"
-    print(f'=== {command}: "{args.query}" (department={scope}, top_k={args.top_k}, min_score={args.min_score}) ===')
+    print(
+        f'=== {command}: "{args.query}" (mode={args.mode}, department={scope}, '
+        f"top_k={args.top_k}, min_score={args.min_score}) ==="
+    )
 
 
 def describe(rank: int, result: SearchResult) -> str:
@@ -75,6 +82,11 @@ def main() -> None:
     query_options.add_argument("--top-k", type=int, default=settings.top_k)
     query_options.add_argument("--min-score", type=float, default=settings.min_score)
     query_options.add_argument("--department", default=None)
+    query_options.add_argument(
+        "--mode",
+        choices=[mode.value for mode in SearchMode],
+        default=settings.search_mode,
+    )
 
     parser = argparse.ArgumentParser(description="LangChain RAG system")
     commands = parser.add_subparsers(dest="command", required=True)

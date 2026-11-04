@@ -33,6 +33,8 @@ class Settings:
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "100"))
     top_k: int = int(os.getenv("TOP_K", "3"))
     min_score: float = float(os.getenv("MIN_SCORE", "0.3"))
+    search_mode: str = os.getenv("SEARCH_MODE", "hybrid")
+    prefetch_limit: int = int(os.getenv("PREFETCH_LIMIT", "20"))
     base_dir: Path = BASE_DIR
     docs_dir: Path = Path(os.getenv("DOCS_DIR", BASE_DIR / "departments"))
 

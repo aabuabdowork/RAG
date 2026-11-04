@@ -1,6 +1,13 @@
 """Domain entities representing core business models."""
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List
+
+
+class SearchMode(str, Enum):
+    HYBRID = "hybrid"
+    DENSE = "dense"
+    SPARSE = "sparse"
 
 
 @dataclass(frozen=True)

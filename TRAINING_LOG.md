@@ -10,7 +10,7 @@ A document pipeline built with **clean architecture**:
 
 ```
 departments/<DEPT>/*.pdf ──► Hash check ──► Extract ──► Chunk ──► Embed ──► Index (Qdrant)
-question ──► Embed ──► Search (optional department filter) ──► top-k chunks + score ──► LLM ──► answer + sources
+question ──► Hybrid search (dense + BM25 → RRF, optional department filter) ──► top-k chunks ──► LLM ──► answer + sources
 ```
 
 | Layer | Folder | Role |
@@ -342,6 +342,67 @@ python main.py ask "How many remote days per week are allowed?" --department HR
 - **Retrieval ≠ relevance:** a chunk can score above the threshold and still not contain the answer → the prompt rule is essential.
 - Answers can combine facts from several chunks → send top_k chunks, not just #1.
 - The department filter also controls what the LLM can "see" → basis for access control.
+
+---
+
+## Step 11 — Hybrid Search: Dense + BM25 + RRF (2026-11-04)
+
+**What:** Search now combines **semantic** (MiniLM dense vectors) and **keyword** (BM25 sparse vectors) results, merged with **Reciprocal Rank Fusion (RRF)**.
+
+```
+                    ┌─► dense  (MiniLM, cosine, min_score)  top 20 ─┐
+question ──► embed ─┤                                               ├─► RRF ──► top_k ──► LLM
+                    └─► sparse (BM25, IDF)                  top 20 ─┘
+                    (department filter applied to both)
+```
+
+**How BM25 is computed:** by **Qdrant itself** (built-in `qdrant/bm25` inference, server ≥ 1.15) — we send raw text, Qdrant tokenizes, stems, and weights it. No new Python library.
+
+**Commands**
+```bash
+python main.py search "VPN"                       # hybrid (default)
+python main.py search "VPN" --mode dense          # semantic only
+python main.py search "VPN" --mode sparse         # BM25 only
+python main.py ask "What is the policy version?"  # RAG uses hybrid
+```
+
+**Changes**
+- `entities.py` — `SearchMode` enum (`hybrid`, `dense`, `sparse`)
+- `qdrant_store.py` — named vectors `dense` + sparse `bm25` (`Modifier.IDF`); hybrid = 2 `Prefetch` + `FusionQuery(RRF)`; client uses `cloud_inference=True` so text is embedded server-side
+- `vector_store.py`, `search_documents.py`, `ask_question.py` — pass `query` text + `mode`
+- `config.py` — `SEARCH_MODE=hybrid`, `PREFETCH_LIMIT=20`
+- `main.py` — `--mode` option on `search` and `ask`
+- Collection deleted and re-indexed (new vector layout)
+
+**Comparison (top 3, min_score 0.3)**
+| Query | Dense | Sparse (BM25) | Hybrid |
+|---|---|---|---|
+| `VPN` | ❌ no results | ✅ | ✅ |
+| `security@falcontech.example` | ⚠️ answer at rank 3 | ✅ rank 1 | ✅ rank 1 |
+| `version 2.1` | ❌ no results | ✅ | ✅ |
+| `1,500 SAR` | ❌ no results | ✅ | ✅ |
+| `work from home` | ✅ (1 result) | ⚠️ rank 1 wrong ("home office") | ✅ rank 1 |
+| `laptop rules` | ✅ | ✅ | ✅ |
+| `bake a chocolate cake` | none ✅ | none ✅ | none ✅ |
+
+→ Dense fails on **exact terms**, BM25 fails on **meaning**; hybrid gets **both**.
+
+**Scores per mode (important!)**
+| Mode | Score type | Range | `min_score` applies? |
+|---|---|---|---|
+| dense | Cosine similarity | −1 → 1 | ✅ |
+| sparse | BM25 relevance | 0 → unbounded (e.g. 5.9) | ❌ |
+| hybrid | RRF (rank-based) | 0 → 1 (1.0 = rank 1 in both lists) | ✅ on the dense side only |
+
+**Key concepts**
+| Term | Meaning |
+|---|---|
+| **Dense vector** | Every dimension has a value (384 floats); captures meaning. |
+| **Sparse vector** | Mostly zeros; only words present in the text have a weight. |
+| **BM25** | Classic keyword ranking: rare words that appear often in a chunk score high. |
+| **IDF** | Inverse Document Frequency — rare words matter more; Qdrant computes it over the whole collection. |
+| **Prefetch** | Sub-query that collects candidates before fusion. |
+| **RRF** | Merges ranked lists by position: score = Σ 1/(k + rank). Ignores raw score scales. |
 
 ---
 
