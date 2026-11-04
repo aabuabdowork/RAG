@@ -28,6 +28,15 @@ class ExtractedDocument:
 
 
 @dataclass(frozen=True)
+class SearchResult:
+    text: str
+    score: float
+    file_name: str
+    page_number: int
+    chunk_index: int
+
+
+@dataclass(frozen=True)
 class DocumentEmbedding:
     """Represents vector embedding data for a text snippet or document page."""
     text: str

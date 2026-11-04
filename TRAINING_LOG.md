@@ -20,7 +20,7 @@ doc/*.pdf ──► Hash check ──► Extract ──► Chunk ──► Embed
 | Core | `src/core` | Settings / `.env` config. |
 | Composition Root | `main.py` | Wires everything together and runs it. |
 
-**Run:** `docker compose up -d` → `python main.py`
+**Run:** `docker compose up -d` → `python main.py ingest` → `python main.py search "your question"`
 
 ---
 
@@ -206,6 +206,51 @@ error                             → failed (reason), other files continue
 
 ---
 
+## Step 8 — Search with Scores (2026-11-03)
+
+**What:** Semantic search over Qdrant. A question is embedded with the **same** MiniLM model and compared to all chunks.
+
+**Commands**
+```bash
+python main.py ingest
+python main.py search "How many remote days per week are allowed?"
+python main.py search "core hours" --top-k 5 --min-score 0.4
+```
+
+**Files**
+- `src/domain/entities.py` — `SearchResult` (text, score, file_name, page_number, chunk_index)
+- `src/domain/interfaces/vector_store.py` — `search(vector, top_k, min_score)`
+- `src/infrastructure/vectorstores/qdrant_store.py` — uses Qdrant `query_points` with `score_threshold`
+- `src/application/use_cases/search_documents.py` — `SearchDocumentsUseCase`
+- `src/core/config.py` — `TOP_K=3`, `MIN_SCORE=0.3`
+- `main.py` — `ingest` / `search` commands (argparse)
+
+**Score concepts**
+| Term | Meaning |
+|---|---|
+| Score | Cosine similarity, −1 → 1. Higher = closer meaning. |
+| top_k | Max number of chunks returned. |
+| min_score | Threshold; below it a chunk is ignored → "No relevant results". |
+
+**Calibration (MiniLM, our documents)**
+| Question | Best score | Correct chunk? |
+|---|---|---|
+| How many remote days per week? | 0.604 / 0.524 | Yes, in top 2 |
+| What are the core hours? | 0.580 | Yes |
+| Home office allowance? | 0.403 | Yes |
+| Report a data leak? | 0.505 | Yes |
+| Capital of France? (off-topic) | 0.012 | — |
+| Bake a chocolate cake? (off-topic) | < 0 | — |
+
+→ Relevant ≈ **0.40–0.60**, unrelated ≈ **≤ 0.21** → `MIN_SCORE=0.3` sits in the gap.
+
+**Lessons**
+- Scores are **relative to the model**: re-calibrate if the embedding model changes.
+- The best answer is not always rank 1 ("remote days" answer was rank 2) → send top_k chunks to the LLM, not just one.
+- A threshold lets the system say "not found" instead of hallucinating.
+
+---
+
 ## Glossary
 
 | Term | Meaning |
@@ -226,7 +271,7 @@ error                             → failed (reason), other files continue
 
 ## Open Notes / Next Steps
 
-- [ ] Retrieval: embed a user question → search Qdrant → top-k chunks.
+- [x] Retrieval: embed a user question → search Qdrant → top-k chunks (Step 8).
 - [ ] RAG answer: send retrieved chunks + question to the LLM.
 - [ ] Arabic documents → switch to a multilingual embedding model (MiniLM is English-only).
 - [x] Re-indexing an edited document leaves old chunks behind → solved in Step 6 (delete by `file_name`).

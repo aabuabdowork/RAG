@@ -14,7 +14,7 @@ from qdrant_client.models import (
 )
 
 from src.core.config import settings
-from src.domain.entities import DocumentEmbedding
+from src.domain.entities import DocumentEmbedding, SearchResult
 from src.domain.interfaces.vector_store import IVectorStore
 
 
@@ -28,6 +28,25 @@ class QdrantVectorStore(IVectorStore):
         self._client = QdrantClient(url=url)
         self._collection = collection_name
         self._ensure_collection(dimension)
+
+    def search(self, vector: List[float], top_k: int, min_score: float) -> List[SearchResult]:
+        points = self._client.query_points(
+            collection_name=self._collection,
+            query=vector,
+            limit=top_k,
+            score_threshold=min_score,
+            with_payload=True,
+        ).points
+        return [
+            SearchResult(
+                text=point.payload["text"],
+                score=point.score,
+                file_name=point.payload["file_name"],
+                page_number=point.payload["page_number"],
+                chunk_index=point.payload["chunk_index"],
+            )
+            for point in points
+        ]
 
     def exists(self, doc_hash: str) -> bool:
         return self._count_where("doc_hash", doc_hash) > 0

@@ -31,6 +31,8 @@ class Settings:
     qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "langchain_rag")
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "800"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "100"))
+    top_k: int = int(os.getenv("TOP_K", "3"))
+    min_score: float = float(os.getenv("MIN_SCORE", "0.3"))
     base_dir: Path = BASE_DIR
     docs_dir: Path = Path(os.getenv("DOCS_DIR", BASE_DIR / "doc"))
 
