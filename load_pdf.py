@@ -7,7 +7,7 @@ from src.infrastructure.loaders.pypdf_loader import PyPDFDocumentLoader
 
 
 def main() -> None:
-    doc_path = settings.docs_dir / "doc/sample.pdf"
+    doc_path = settings.docs_dir / "IT" / "sample.pdf"
     loader = PyPDFDocumentLoader()
     use_case = ExtractDocumentUseCase(loader=loader)
 

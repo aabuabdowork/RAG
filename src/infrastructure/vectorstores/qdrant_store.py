@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -29,10 +29,17 @@ class QdrantVectorStore(IVectorStore):
         self._collection = collection_name
         self._ensure_collection(dimension)
 
-    def search(self, vector: List[float], top_k: int, min_score: float) -> List[SearchResult]:
+    def search(
+        self,
+        vector: List[float],
+        top_k: int,
+        min_score: float,
+        department: Optional[str] = None,
+    ) -> List[SearchResult]:
         points = self._client.query_points(
             collection_name=self._collection,
             query=vector,
+            query_filter=self._where("department", department) if department else None,
             limit=top_k,
             score_threshold=min_score,
             with_payload=True,
@@ -41,6 +48,7 @@ class QdrantVectorStore(IVectorStore):
             SearchResult(
                 text=point.payload["text"],
                 score=point.score,
+                department=point.payload["department"],
                 file_name=point.payload["file_name"],
                 page_number=point.payload["page_number"],
                 chunk_index=point.payload["chunk_index"],
@@ -51,12 +59,12 @@ class QdrantVectorStore(IVectorStore):
     def exists(self, doc_hash: str) -> bool:
         return self._count_where("doc_hash", doc_hash) > 0
 
-    def delete_by_file(self, file_name: str) -> int:
-        found = self._count_where("file_name", file_name)
+    def delete_by_file(self, file_path: str) -> int:
+        found = self._count_where("file_path", file_path)
         if found:
             self._client.delete(
                 collection_name=self._collection,
-                points_selector=FilterSelector(filter=self._where("file_name", file_name)),
+                points_selector=FilterSelector(filter=self._where("file_path", file_path)),
                 wait=True,
             )
         return found
@@ -84,7 +92,7 @@ class QdrantVectorStore(IVectorStore):
             collection_name=self._collection,
             vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
         )
-        for field in ("doc_hash", "file_name"):
+        for field in ("doc_hash", "file_path", "department"):
             self._client.create_payload_index(
                 collection_name=self._collection,
                 field_name=field,

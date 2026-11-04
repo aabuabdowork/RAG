@@ -9,7 +9,8 @@ A step-by-step record of what we built, why, and what we learned.
 A document pipeline built with **clean architecture**:
 
 ```
-doc/*.pdf ──► Hash check ──► Extract ──► Chunk ──► Embed ──► Index (Qdrant)
+departments/<DEPT>/*.pdf ──► Hash check ──► Extract ──► Chunk ──► Embed ──► Index (Qdrant)
+question ──► Embed ──► Search (optional department filter) ──► top-k chunks + score
 ```
 
 | Layer | Folder | Role |
@@ -248,6 +249,52 @@ python main.py search "core hours" --top-k 5 --min-score 0.4
 - Scores are **relative to the model**: re-calibrate if the embedding model changes.
 - The best answer is not always rank 1 ("remote days" answer was rank 2) → send top_k chunks to the LLM, not just one.
 - A threshold lets the system say "not found" instead of hallucinating.
+
+---
+
+## Step 9 — Departments + Metadata Filter (2026-11-04)
+
+**What:** Documents are organized by department; search can be limited to one department.
+
+**New folder layout** (replaces `doc/`)
+```
+departments/
+├── HR/remote_work_policy.pdf
+└── IT/sample.pdf
+```
+The **sub-folder name = department**. A new department = a new folder, no code change.
+
+**Commands**
+```bash
+python main.py ingest
+python main.py search "core hours"                    # all departments
+python main.py search "core hours" --department HR    # HR only
+python main.py search "core hours" --department it    # case-insensitive → IT only
+```
+
+**Changes**
+- `ingest_folder.py` — loops each department folder, passes `department` to ingest
+- `ingest_document.py` — adds `department` (upper-case) + `file_path` (`HR/remote_work_policy.pdf`) to payload
+- `vector_store.py` / `qdrant_store.py` — `search(..., department)` uses a Qdrant `query_filter`; keyword indexes on `doc_hash`, `file_path`, `department`
+- `delete_by_file` now uses `file_path` → same file name in two departments no longer collides
+- `search_documents.py`, `main.py` — `--department` option
+- `config.py` — `DOCS_DIR` default `departments/`
+- Deleted the old collection and re-indexed from scratch (new payload schema)
+
+**Verified**
+| Query | Filter | Result |
+|---|---|---|
+| core hours | none | 3 HR chunks (best 0.556) |
+| core hours | HR | same 3 HR chunks |
+| core hours | IT | No relevant results |
+| PDF text extraction | IT | `IT/sample.pdf` (0.783) |
+
+**Key concepts**
+- **Metadata filter** = "search only where `department == HR`", applied *during* the vector search (pre-filter), not after.
+- **Payload index** on `department` keeps filtered search fast as data grows.
+- This is the basis for **access control**: later, a user's department decides which filter is applied.
+
+**Known limit:** the same PDF in two departments is indexed only once (global hash check) → it only appears under the first department.
 
 ---
 

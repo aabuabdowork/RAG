@@ -34,7 +34,7 @@ class Settings:
     top_k: int = int(os.getenv("TOP_K", "3"))
     min_score: float = float(os.getenv("MIN_SCORE", "0.3"))
     base_dir: Path = BASE_DIR
-    docs_dir: Path = Path(os.getenv("DOCS_DIR", BASE_DIR / "doc"))
+    docs_dir: Path = Path(os.getenv("DOCS_DIR", BASE_DIR / "departments"))
 
     def resolve_doc_path(self, filename: str = "sample.pdf") -> Path:
         for candidate in [self.base_dir / filename, self.base_dir / "doc" / filename]:

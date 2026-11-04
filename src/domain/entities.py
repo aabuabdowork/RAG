@@ -31,6 +31,7 @@ class ExtractedDocument:
 class SearchResult:
     text: str
     score: float
+    department: str
     file_name: str
     page_number: int
     chunk_index: int
