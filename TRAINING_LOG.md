@@ -10,7 +10,7 @@ A document pipeline built with **clean architecture**:
 
 ```
 departments/<DEPT>/*.pdf ──► Hash check ──► Extract ──► Chunk ──► Embed ──► Index (Qdrant)
-question ──► Embed ──► Search (optional department filter) ──► top-k chunks + score
+question ──► Embed ──► Search (optional department filter) ──► top-k chunks + score ──► LLM ──► answer + sources
 ```
 
 | Layer | Folder | Role |
@@ -298,6 +298,53 @@ python main.py search "core hours" --department it    # case-insensitive → IT 
 
 ---
 
+## Step 10 — RAG Answer with LLM (2026-11-04)
+
+**What:** The full RAG loop. Retrieved chunks are given to the LLM, which answers **only** from them and cites sources.
+
+```
+question ──► search (top_k, min_score, department) ──► chunks
+        ──► prompt (rules + chunks + question) ──► LLM (OpenRouter gpt-oss-20b) ──► answer + sources
+```
+
+**Command**
+```bash
+python main.py ask "How many remote days per week are allowed?" --department HR
+```
+
+**Files**
+- `src/domain/entities.py` — `Answer` (text, sources)
+- `src/application/use_cases/ask_question.py` — `AskQuestionUseCase` (prompt template + context builder)
+- `main.py` — new `ask` command; `search`/`ask` share options (`--top-k`, `--min-score`, `--department`)
+- Reuses existing `OpenRouterLLMService` and `SearchDocumentsUseCase` — no new libraries
+
+**Prompt rules (grounding)**
+1. Use only facts from the context, no outside knowledge.
+2. Cite each fact as `[DEPT/file.pdf, p.N]`.
+3. If the answer is not in the context → reply exactly "I couldn't find this in the documents."
+
+**Two safety layers against hallucination**
+| Layer | When | Cost |
+|---|---|---|
+| `min_score` threshold | No chunk relevant enough → return "not found" **without calling the LLM** | Free |
+| Prompt rule | Chunks found but don't contain the answer → LLM says "not found" | 1 LLM call |
+
+**Verified**
+| Question | Filter | Result |
+|---|---|---|
+| Remote days per week? | HR | "three days… fourth day for special cases" + citation ✅ |
+| Home office allowance + how to claim? | all | "1,500 SAR, receipts within 30 days" + citation ✅ |
+| Parental leave policy? | all | Chunk retrieved (0.441) but LLM said "not found" ✅ (layer 2) |
+| Bake a chocolate cake? | all | "not found", no LLM call ✅ (layer 1) |
+| Core hours? | IT | "not found" (HR content filtered out) ✅ |
+
+**Lessons**
+- **Retrieval ≠ relevance:** a chunk can score above the threshold and still not contain the answer → the prompt rule is essential.
+- Answers can combine facts from several chunks → send top_k chunks, not just #1.
+- The department filter also controls what the LLM can "see" → basis for access control.
+
+---
+
 ## Glossary
 
 | Term | Meaning |
@@ -319,7 +366,7 @@ python main.py search "core hours" --department it    # case-insensitive → IT 
 ## Open Notes / Next Steps
 
 - [x] Retrieval: embed a user question → search Qdrant → top-k chunks (Step 8).
-- [ ] RAG answer: send retrieved chunks + question to the LLM.
+- [x] RAG answer: send retrieved chunks + question to the LLM (Step 10).
 - [ ] Arabic documents → switch to a multilingual embedding model (MiniLM is English-only).
 - [x] Re-indexing an edited document leaves old chunks behind → solved in Step 6 (delete by `file_name`).
 - [ ] Sync deletions: remove points for files no longer in `doc/`.

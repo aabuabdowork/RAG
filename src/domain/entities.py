@@ -38,6 +38,12 @@ class SearchResult:
 
 
 @dataclass(frozen=True)
+class Answer:
+    text: str
+    sources: List[SearchResult]
+
+
+@dataclass(frozen=True)
 class DocumentEmbedding:
     """Represents vector embedding data for a text snippet or document page."""
     text: str
