@@ -1,6 +1,6 @@
-import re
 from typing import List, Optional
 
+from src.application.prompt_safety import strip_tags
 from src.application.use_cases.search_documents import SearchDocumentsUseCase
 from src.domain.entities import Answer, SearchMode, SearchResult
 from src.domain.exceptions import BudgetExceededError
@@ -26,8 +26,6 @@ USER_PROMPT = """<context>
 <question>
 {question}
 </question>"""
-
-TAG_PATTERN = re.compile(r"</?\s*(context|question)\s*>", re.IGNORECASE)
 
 
 class AskQuestionUseCase:
@@ -59,13 +57,19 @@ class AskQuestionUseCase:
                 f"Question is {question_tokens} tokens; the limit is {self._max_question_tokens}."
             )
 
-        sources = self._fit_budget(self._search.execute(question, top_k, min_score, department, mode))
+        retrieval = self._search.execute(question, top_k, min_score, department, mode)
+        sources = self._fit_budget(retrieval.results)
         if not sources:
-            return Answer(text=NOT_FOUND, sources=[], tokens={"question": question_tokens})
+            return Answer(
+                text=NOT_FOUND,
+                sources=[],
+                queries=retrieval.queries,
+                tokens={"question": question_tokens},
+            )
 
         context = "\n\n".join(self._format(source) for source in sources)
-        user_prompt = USER_PROMPT.format(context=context, question=self._clean(question))
-        text = self._llm.generate(user_prompt, system=SYSTEM_PROMPT).strip()
+        user_prompt = USER_PROMPT.format(context=context, question=strip_tags(question))
+        text = self._llm.generate(user_prompt, system=SYSTEM_PROMPT, name="answer").strip()
 
         tokens = {
             "rules": self._counter.count(SYSTEM_PROMPT),
@@ -73,7 +77,7 @@ class AskQuestionUseCase:
             "context": self._counter.count(context),
             "answer": self._counter.count(text),
         }
-        return Answer(text=text, sources=sources, tokens=tokens)
+        return Answer(text=text, sources=sources, queries=retrieval.queries, tokens=tokens)
 
     def _fit_budget(self, sources: List[SearchResult]) -> List[SearchResult]:
         kept: List[SearchResult] = []
@@ -86,10 +90,6 @@ class AskQuestionUseCase:
             used += cost
         return kept
 
-    @classmethod
-    def _format(cls, source: SearchResult) -> str:
-        return f"[{source.department}/{source.file_name}, p.{source.page_number}]\n{cls._clean(source.text)}"
-
     @staticmethod
-    def _clean(text: str) -> str:
-        return TAG_PATTERN.sub("", text)
+    def _format(source: SearchResult) -> str:
+        return f"[{source.department}/{source.file_name}, p.{source.page_number}]\n{strip_tags(source.text)}"

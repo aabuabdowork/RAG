@@ -6,15 +6,17 @@ from langsmith import traceable
 
 from src.application.use_cases.ask_question import AskQuestionUseCase
 from src.application.use_cases.embed_document import EmbedDocumentUseCase
+from src.application.use_cases.expand_query import ExpandQueryUseCase
 from src.application.use_cases.ingest_document import IngestDocumentUseCase
 from src.application.use_cases.ingest_folder import IngestFolderUseCase
 from src.application.use_cases.search_documents import SearchDocumentsUseCase
 from src.core.config import settings
-from src.domain.entities import Answer, SearchMode, SearchResult
+from src.domain.entities import Answer, Retrieval, SearchMode, SearchResult
 from src.domain.exceptions import BudgetExceededError
 from src.infrastructure.embeddings.huggingface_service import HuggingFaceEmbeddingService
 from src.infrastructure.llm.openrouter_service import OpenRouterLLMService
 from src.infrastructure.loaders.pypdf_loader import PyPDFDocumentLoader
+from src.infrastructure.rerankers.cross_encoder_reranker import CrossEncoderReranker
 from src.infrastructure.splitters.recursive_splitter import RecursiveTextSplitter
 from src.infrastructure.tokenizers.tiktoken_counter import TiktokenCounter
 from src.infrastructure.vectorstores.qdrant_store import QdrantVectorStore
@@ -45,34 +47,29 @@ def ingest(embedder: HuggingFaceEmbeddingService, store: QdrantVectorStore) -> D
 
 
 @traceable(name="search", run_type="chain", process_inputs=command_inputs)
-def search(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> List[SearchResult]:
-    results = search_documents.execute(
+def search(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> Retrieval:
+    retrieval = search_documents.execute(
         args.query, args.top_k, args.min_score, args.department, SearchMode(args.mode)
     )
 
     print_header("Search", args)
-    if not results:
-        print("No relevant results found.")
-    for rank, result in enumerate(results, start=1):
+    print_queries(retrieval.queries)
+    if not retrieval.results:
+        print("\nNo relevant results found.")
+    for rank, result in enumerate(retrieval.results, start=1):
         print(f"\n{describe(rank, result)}")
         print(f"   {' '.join(result.text.split())[:300]}")
-    return results
+    return retrieval
 
 
 @traceable(name="ask", run_type="chain", process_inputs=command_inputs)
-def ask(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> Answer:
-    ask_question = AskQuestionUseCase(
-        search=search_documents,
-        llm=OpenRouterLLMService(),
-        counter=TiktokenCounter(),
-        max_question_tokens=settings.max_question_tokens,
-        max_context_tokens=settings.max_context_tokens,
-    )
+def ask(ask_question: AskQuestionUseCase, args: argparse.Namespace) -> Answer:
     answer = ask_question.execute(
         args.query, args.top_k, args.min_score, args.department, SearchMode(args.mode)
     )
 
     print_header("Ask", args)
+    print_queries(answer.queries)
     print(f"\n{answer.text}")
     if answer.sources:
         print("\nSources:")
@@ -85,28 +82,38 @@ def ask(search_documents: SearchDocumentsUseCase, args: argparse.Namespace) -> A
 def print_header(command: str, args: argparse.Namespace) -> None:
     scope = args.department.upper() if args.department else "ALL"
     print(
-        f'=== {command}: "{args.query}" (mode={args.mode}, department={scope}, '
-        f"top_k={args.top_k}, min_score={args.min_score}) ==="
+        f'=== {command}: "{args.query}" (mode={args.mode}, rerank={args.rerank}, '
+        f"multi_query={args.multi_query}, department={scope}, top_k={args.top_k}) ==="
     )
 
 
+def print_queries(queries: List[str]) -> None:
+    if len(queries) < 2:
+        return
+    print("\nQueries:")
+    print(f"  original : {queries[0]}")
+    for number, variant in enumerate(queries[1:], start=1):
+        print(f"  variant {number}: {variant}")
+
+
 def describe(rank: int, result: SearchResult) -> str:
+    rerank = f" rerank={result.rerank_score:.3f}" if result.rerank_score is not None else ""
     return (
-        f"{rank}. score={result.score:.3f} | {result.department}/{result.file_name} "
+        f"{rank}. score={result.score:.3f}{rerank} | {result.department}/{result.file_name} "
         f"| page {result.page_number}, chunk {result.chunk_index}"
     )
 
 
-def main() -> None:
+def parse_args() -> argparse.Namespace:
     query_options = argparse.ArgumentParser(add_help=False)
     query_options.add_argument("query")
     query_options.add_argument("--top-k", type=int, default=settings.top_k)
     query_options.add_argument("--min-score", type=float, default=settings.min_score)
     query_options.add_argument("--department", default=None)
+    query_options.add_argument("--mode", choices=[mode.value for mode in SearchMode], default=settings.search_mode)
+    query_options.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=settings.rerank_enabled)
     query_options.add_argument(
-        "--mode",
-        choices=[mode.value for mode in SearchMode],
-        default=settings.search_mode,
+        "--multi-query", action=argparse.BooleanOptionalAction, default=settings.multi_query_enabled
     )
 
     parser = argparse.ArgumentParser(description="LangChain RAG system")
@@ -114,8 +121,11 @@ def main() -> None:
     commands.add_parser("ingest", help="Index all documents in the departments folder")
     commands.add_parser("search", parents=[query_options], help="Search indexed documents")
     commands.add_parser("ask", parents=[query_options], help="Answer a question from the documents")
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def main() -> None:
+    args = parse_args()
     embedder = HuggingFaceEmbeddingService()
     store = QdrantVectorStore(dimension=embedder.dimension)
 
@@ -123,14 +133,35 @@ def main() -> None:
         ingest(embedder, store)
         return
 
-    search_documents = SearchDocumentsUseCase(
-        embedder=embedder, store=store, max_top_k=settings.max_top_k
+    counter = TiktokenCounter()
+    llm = OpenRouterLLMService() if args.command == "ask" or args.multi_query else None
+    expander = (
+        ExpandQueryUseCase(llm, counter, settings.max_query_variants, settings.max_question_tokens)
+        if args.multi_query
+        else None
     )
+    search_documents = SearchDocumentsUseCase(
+        embedder=embedder,
+        store=store,
+        max_top_k=settings.max_top_k,
+        reranker=CrossEncoderReranker() if args.rerank else None,
+        expander=expander,
+        rerank_candidates=settings.rerank_candidates,
+        multi_query_candidates=settings.multi_query_candidates,
+    )
+
     try:
         if args.command == "search":
             search(search_documents, args)
         else:
-            ask(search_documents, args)
+            ask_question = AskQuestionUseCase(
+                search=search_documents,
+                llm=llm,
+                counter=counter,
+                max_question_tokens=settings.max_question_tokens,
+                max_context_tokens=settings.max_context_tokens,
+            )
+            ask(ask_question, args)
     except BudgetExceededError as error:
         print(f"Rejected: {error}")
 

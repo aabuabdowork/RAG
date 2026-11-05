@@ -25,8 +25,8 @@ class OpenRouterLLMService(ILLMService):
             max_tokens=max_tokens,
         )
 
-    def generate(self, prompt: str, system: str = "") -> str:
+    def generate(self, prompt: str, system: str = "", name: str = "llm") -> str:
         messages = [("system", system), ("human", prompt)] if system else [("human", prompt)]
-        response = self._client.invoke(messages)
+        response = self._client.invoke(messages, config={"run_name": name})
         return str(response.content)
 

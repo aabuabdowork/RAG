@@ -1,7 +1,7 @@
 """Domain entities representing core business models."""
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class SearchMode(str, Enum):
@@ -42,12 +42,20 @@ class SearchResult:
     file_name: str
     page_number: int
     chunk_index: int
+    rerank_score: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class Retrieval:
+    queries: List[str]
+    results: List[SearchResult]
 
 
 @dataclass(frozen=True)
 class Answer:
     text: str
     sources: List[SearchResult]
+    queries: List[str] = field(default_factory=list)
     tokens: Dict[str, int] = field(default_factory=dict)
 
 
