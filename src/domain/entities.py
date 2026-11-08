@@ -10,6 +10,29 @@ class SearchMode(str, Enum):
     SPARSE = "sparse"
 
 
+class DocumentStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    INDEXED = "indexed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class Document:
+    id: str
+    department: str
+    file_name: str
+    storage_path: str
+    doc_hash: str
+    status: DocumentStatus = DocumentStatus.PENDING
+    chunk_count: int = 0
+    error: Optional[str] = None
+
+    @property
+    def key(self) -> str:
+        return f"{self.department}/{self.file_name}"
+
+
 @dataclass(frozen=True)
 class DocumentPage:
     """Represents a single page extracted from a document."""

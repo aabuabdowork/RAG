@@ -27,6 +27,7 @@ from src.domain.interfaces.vector_store import IVectorStore
 DENSE = "dense"
 SPARSE = "bm25"
 BM25_MODEL = "qdrant/bm25"
+FACET_LIMIT = 100_000
 
 
 def without_vectors(inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -75,18 +76,21 @@ class QdrantVectorStore(IVectorStore):
             for point in points
         ]
 
-    def exists(self, doc_hash: str) -> bool:
-        return self._count_where("doc_hash", doc_hash) > 0
-
-    def delete_by_file(self, file_path: str) -> int:
-        found = self._count_where("file_path", file_path)
+    def delete_document(self, document_id: str) -> int:
+        found = self._count_where("document_id", document_id)
         if found:
             self._client.delete(
                 collection_name=self._collection,
-                points_selector=FilterSelector(filter=self._where("file_path", file_path)),
+                points_selector=FilterSelector(filter=self._where("document_id", document_id)),
                 wait=True,
             )
         return found
+
+    def count_by_document(self) -> Dict[str, int]:
+        hits = self._client.facet(
+            collection_name=self._collection, key="document_id", limit=FACET_LIMIT, exact=True
+        ).hits
+        return {str(hit.value): hit.count for hit in hits}
 
     def upsert(self, embeddings: List[DocumentEmbedding]) -> int:
         points = [
@@ -134,7 +138,7 @@ class QdrantVectorStore(IVectorStore):
             vectors_config={DENSE: VectorParams(size=dimension, distance=Distance.COSINE)},
             sparse_vectors_config={SPARSE: SparseVectorParams(modifier=Modifier.IDF)},
         )
-        for field in ("doc_hash", "file_path", "department"):
+        for field in ("document_id", "department"):
             self._client.create_payload_index(
                 collection_name=self._collection,
                 field_name=field,
@@ -159,7 +163,7 @@ class QdrantVectorStore(IVectorStore):
     @staticmethod
     def _point_id(emb: DocumentEmbedding) -> str:
         meta = emb.metadata
-        key = f"{meta['doc_hash']}::{meta['page_number']}::{meta['chunk_index']}"
+        key = f"{meta['document_id']}::{meta['page_number']}::{meta['chunk_index']}"
         return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
     @staticmethod

@@ -1,15 +1,18 @@
 import argparse
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from langsmith import traceable
 
 from src.application.use_cases.ask_question import AskQuestionUseCase
+from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.embed_document import EmbedDocumentUseCase
 from src.application.use_cases.expand_query import ExpandQueryUseCase
-from src.application.use_cases.ingest_document import IngestDocumentUseCase
-from src.application.use_cases.ingest_folder import IngestFolderUseCase
+from src.application.use_cases.index_documents import IndexDocumentsUseCase
+from src.application.use_cases.reconcile import ReconcileUseCase
 from src.application.use_cases.search_documents import SearchDocumentsUseCase
+from src.application.use_cases.upload_document import UploadDocumentUseCase
+from src.application.use_cases.upload_folder import UploadFolderUseCase
 from src.core.config import settings
 from src.domain.entities import Answer, Retrieval, SearchMode, SearchResult
 from src.domain.exceptions import BudgetExceededError
@@ -18,32 +21,64 @@ from src.infrastructure.llm.openrouter_service import OpenRouterLLMService
 from src.infrastructure.loaders.pypdf_loader import PyPDFDocumentLoader
 from src.infrastructure.rerankers.cross_encoder_reranker import CrossEncoderReranker
 from src.infrastructure.splitters.recursive_splitter import RecursiveTextSplitter
+from src.infrastructure.supabase.client import create_supabase_client
+from src.infrastructure.supabase.document_repository import SupabaseDocumentRepository
+from src.infrastructure.supabase.object_storage import SupabaseObjectStorage
 from src.infrastructure.tokenizers.tiktoken_counter import TiktokenCounter
 from src.infrastructure.vectorstores.qdrant_store import QdrantVectorStore
+
+DOCUMENT_COMMANDS = {"upload", "index", "ingest", "delete", "reconcile"}
 
 
 def command_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
     return vars(inputs["args"])
 
 
-@traceable(name="ingest", run_type="chain", process_inputs=lambda inputs: {"folder": str(settings.docs_dir)})
-def ingest(embedder: HuggingFaceEmbeddingService, store: QdrantVectorStore) -> Dict[str, str]:
+@traceable(name="documents", run_type="chain", process_inputs=command_inputs)
+def manage_documents(args: argparse.Namespace) -> None:
+    client = create_supabase_client()
+    repository = SupabaseDocumentRepository(client)
+    storage = SupabaseObjectStorage(client)
+
+    if args.command in ("upload", "ingest"):
+        upload = UploadFolderUseCase(UploadDocumentUseCase(repository, storage))
+        report(f"Upload {settings.docs_dir}", upload.execute(settings.docs_dir))
+    if args.command == "upload":
+        return
+
+    embedder = HuggingFaceEmbeddingService()
+    store = QdrantVectorStore(dimension=embedder.dimension)
+
+    if args.command == "delete":
+        print(DeleteDocumentUseCase(repository, storage, store).execute(*args.document))
+        return
+    if args.command == "reconcile":
+        report("Reconcile", ReconcileUseCase(repository, store).execute())
+
     embed = EmbedDocumentUseCase(
         loader=PyPDFDocumentLoader(),
         splitter=RecursiveTextSplitter(),
         embedder=embedder,
     )
-    ingest_folder = IngestFolderUseCase(IngestDocumentUseCase(embed=embed, store=store))
+    report("Index", IndexDocumentsUseCase(repository, storage, embed, store).execute())
+    print(f"\nPoints in '{settings.qdrant_collection}': {store.count()}")
 
-    print(f"=== Ingesting {settings.docs_dir} ===")
-    results = ingest_folder.execute(settings.docs_dir)
-    for file_name, status in results.items():
-        print(f"{status:<10} {file_name}")
 
-    summary = Counter(status.split(" ")[0] for status in results.values())
-    print(f"\nSummary: {dict(summary)}")
-    print(f"Points in '{settings.qdrant_collection}': {store.count()}")
-    return results
+def report(title: str, results: Dict[str, str]) -> None:
+    print(f"\n=== {title} ===")
+    if not results:
+        print("Nothing to do.")
+    for key, status in results.items():
+        print(f"{status:<15} {key}")
+    if results:
+        print(f"Summary: {dict(Counter(status.split(' ')[0] for status in results.values()))}")
+
+
+def document_key(value: str) -> Tuple[str, str]:
+    department, _, file_name = value.partition("/")
+    if not department or not file_name:
+        raise argparse.ArgumentTypeError("use DEPARTMENT/file_name, e.g. HR/remote_work_policy.pdf")
+    return department, file_name
 
 
 @traceable(name="search", run_type="chain", process_inputs=command_inputs)
@@ -118,7 +153,11 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="LangChain RAG system")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("ingest", help="Index all documents in the departments folder")
+    commands.add_parser("upload", help="Upload the departments folder to Supabase")
+    commands.add_parser("index", help="Index pending Supabase documents into Qdrant")
+    commands.add_parser("ingest", help="Upload, then index")
+    commands.add_parser("reconcile", help="Repair Supabase and Qdrant drift, then index")
+    commands.add_parser("delete", help="Delete a document everywhere").add_argument("document", type=document_key)
     commands.add_parser("search", parents=[query_options], help="Search indexed documents")
     commands.add_parser("ask", parents=[query_options], help="Answer a question from the documents")
     return parser.parse_args()
@@ -126,12 +165,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.command in DOCUMENT_COMMANDS:
+        manage_documents(args)
+        return
+
     embedder = HuggingFaceEmbeddingService()
     store = QdrantVectorStore(dimension=embedder.dimension)
-
-    if args.command == "ingest":
-        ingest(embedder, store)
-        return
 
     counter = TiktokenCounter()
     llm = OpenRouterLLMService() if args.command == "ask" or args.multi_query else None

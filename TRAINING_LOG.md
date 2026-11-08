@@ -687,6 +687,70 @@ weights: torch.float32 | device: cpu | params: 22,713,216 (~91 MB) | output: flo
 
 ---
 
+## Step 18 — Supabase: Source of Truth + Object Storage (2026-11-05)
+
+**Goal:** Supabase owns the documents (files and their status). Qdrant becomes a **search index we can rebuild** from Supabase at any time.
+
+```
+upload ─► Supabase Storage (PDFs) + table "documents" (status) ─► index ─► Qdrant ◄─ search / ask
+```
+
+**Data model:** `supabase/migrations/001_documents.sql`
+- Columns: `id`, `department`, `file_name`, `storage_path`, `doc_hash`, `status`, `chunk_count`, `error`, `created_at`, `updated_at`.
+- Unique on `(department, file_name)`; `updated_at` is set by a trigger.
+- RLS is enabled with no policies, so only the server key can access the table.
+- Private bucket `documents`: PDFs only, 50 MB limit.
+- `id` = `uuid5(DEPT/file_name)`, so it is stable and the same on every retry.
+- Storage path is `DEPT/<id>.pdf`, which keeps unusual characters (e.g., Arabic) out of storage keys.
+
+**Status flow:** `pending → processing → indexed` or `failed` (with the error message).
+
+**Commands**
+| Command | Does |
+|---|---|
+| `upload` | Folder → Storage + table (`pending`). Skips unchanged files using the hash. |
+| `index` | Pending rows → download → chunk → embed → Qdrant → `indexed` |
+| `ingest` | `upload` then `index` |
+| `reconcile` | Requeues stuck or mismatched documents, removes orphan points, then indexes |
+| `delete HR/file.pdf` | Deletes from Qdrant, then Storage, then the row (the row goes last so a crash can be retried) |
+
+**Code**
+| Layer | Added / changed |
+|---|---|
+| domain | `Document`, `DocumentStatus`, `IDocumentRepository`, `IObjectStorage`. `IVectorStore` now has `delete_document` + `count_by_document`. |
+| application | `UploadDocument`, `UploadFolder`, `IndexDocuments`, `DeleteDocument`, `Reconcile` (replace `IngestDocument` / `IngestFolder`) |
+| infrastructure | `supabase/client.py`, `document_repository.py`, `object_storage.py`. Qdrant: `document_id` payload + index, point ID = `uuid5(document_id::page::chunk)`, `facet` for counts per document. |
+| config | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`, `SUPABASE_TABLE` |
+
+**Tested** with in-memory fakes for Supabase and a temporary Qdrant collection:
+| Scenario | Result |
+|---|---|
+| First upload + index | 2 uploaded → indexed (6 + 1 chunks) |
+| Re-upload unchanged | skipped, nothing to index |
+| Points deleted + document stuck in `processing` | reconcile → requeued → re-indexed |
+| Row removed only in Supabase | reconcile → orphan points removed |
+| Broken PDF | `failed (Stream has ended unexpectedly)`; old points kept until a good version arrives |
+| Delete | rows 0, points 0; unknown file → `not found` |
+
+**Lessons**
+- **Source of truth vs index:** if Qdrant breaks, run `index` again. No more manual delete and re-ingest.
+- There is no transaction across two systems, so `status` + `reconcile` keep them consistent.
+- Deterministic IDs make every step safe to retry.
+- Point ID is now based on `document_id`, not `doc_hash`, so the same file in two departments no longer collides.
+- `search` and `ask` are unchanged: Supabase is not on the query path, so it adds no latency.
+- The `service_role` key bypasses RLS → keep it on the server only (`.env`).
+
+**Known gaps**
+- Reconcile checks Supabase ↔ Qdrant only, not Storage files without a row.
+- The current `langchain_rag` collection has the old schema → drop it once, then run `ingest`.
+
+**Setup (user)**
+1. Create a free project at supabase.com.
+2. In the SQL Editor, run `supabase/migrations/001_documents.sql`.
+3. Copy the Project URL and the `service_role` (secret) key into `.env`: `SUPABASE_URL=...` and `SUPABASE_SERVICE_ROLE_KEY=...`.
+
+---
+
 ## Glossary
 
 | Term | Meaning |
@@ -706,6 +770,9 @@ weights: torch.float32 | device: cpu | params: 22,713,216 (~91 MB) | output: flo
 | **M** | Number of links each vector keeps in the HNSW graph. |
 | **ef** | How many candidates HNSW checks (`ef_construct` when building, `hnsw_ef` when searching). |
 | **Quantization** | Compressing vectors (e.g., float32 → int8) to save RAM at a small accuracy cost. |
+| **Source of truth** | The one system whose data is authoritative; others (Qdrant) are rebuilt from it. |
+| **Reconcile** | Comparing two systems and fixing the differences. |
+| **Idempotent** | Running the same step twice gives the same result (safe to retry). |
 
 ---
 
@@ -715,7 +782,9 @@ weights: torch.float32 | device: cpu | params: 22,713,216 (~91 MB) | output: flo
 - [x] RAG answer: send retrieved chunks + question to the LLM (Step 10).
 - [ ] Arabic documents → switch to a multilingual embedding model (MiniLM is English-only).
 - [x] Re-indexing an edited document leaves old chunks behind → solved in Step 6 (delete by `file_name`).
-- [ ] Sync deletions: remove points for files no longer in `departments/`.
+- [x] Sync deletions → `delete` + `reconcile` with Supabase as the source of truth (Step 18).
+- [ ] Reconcile Storage files that have no row (Step 18 gap).
+- [ ] Supabase Auth + RLS policies per department.
 - [ ] Reliable citations: numbered sources `[1]`, mapped to file/page by code (Step 12 finding).
 - [ ] Observability for real data: Langfuse self-hosted (Step 13 alternative).
 - [ ] Multi-query: rerank using the best score across all variants (Step 15 idea).

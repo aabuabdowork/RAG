@@ -47,6 +47,10 @@ class Settings:
     multi_query_enabled: bool = os.getenv("MULTI_QUERY_ENABLED", "false").lower() == "true"
     max_query_variants: int = int(os.getenv("MAX_QUERY_VARIANTS", "3"))
     multi_query_candidates: int = int(os.getenv("MULTI_QUERY_CANDIDATES", "10"))
+    supabase_url: str = os.getenv("SUPABASE_URL", "")
+    supabase_service_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    supabase_bucket: str = os.getenv("SUPABASE_BUCKET", "documents")
+    supabase_table: str = os.getenv("SUPABASE_TABLE", "documents")
     base_dir: Path = BASE_DIR
     docs_dir: Path = Path(os.getenv("DOCS_DIR", BASE_DIR / "departments"))
 

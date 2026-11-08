@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from src.domain.entities import DocumentEmbedding, SearchMode, SearchResult
 
@@ -18,11 +18,11 @@ class IVectorStore(ABC):
         pass
 
     @abstractmethod
-    def exists(self, doc_hash: str) -> bool:
+    def delete_document(self, document_id: str) -> int:
         pass
 
     @abstractmethod
-    def delete_by_file(self, file_path: str) -> int:
+    def count_by_document(self) -> Dict[str, int]:
         pass
 
     @abstractmethod
