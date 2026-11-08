@@ -751,6 +751,187 @@ upload ─► Supabase Storage (PDFs) + table "documents" (status) ─► index 
 
 ---
 
+## Step 19 — Error Handling (2026-11-08)
+
+**Goal:** Fail clearly and recover where possible, instead of hanging or crashing.
+
+| Problem | Fix |
+|---|---|
+| OpenRouter hangs | `LLM_TIMEOUT=30` s |
+| Temporary error (429/5xx, network) | `LLM_MAX_RETRIES=2` with backoff (built into the OpenAI client) |
+| Primary model down | `with_fallbacks` → `FALLBACK_MODEL=openai/gpt-oss-120b` |
+| LLM fails completely | `ServiceUnavailableError("LLM")` → clean message |
+| Qdrant down | `QDRANT_TIMEOUT=10` + `ServiceUnavailableError("Qdrant")` |
+| Multi-query rewrite fails | Logged warning, continue with the original question |
+| LLM returns an empty answer | Treated as `NOT_FOUND` |
+| Anything unexpected | Full traceback → `logs/app.log`; the user sees a short message |
+| Answers vary between runs | `LLM_TEMPERATURE=0` |
+
+**Exit codes:** 0 ok, 1 error, 2 rejected (budget), 3 unavailable.
+
+**Tested**
+| Case | Result |
+|---|---|
+| Normal | answer, exit 0 |
+| 301-token question | `Rejected`, exit 2 |
+| Qdrant on the wrong port | `Unavailable: Qdrant is unavailable (ResponseHandlingException)`, exit 3 |
+| Primary model invalid | the fallback model answered |
+| Both models invalid + multi-query | expansion warning logged → `Unavailable: LLM...` |
+
+---
+
+## Step 20 — Exact LLM Cache (2026-11-08)
+
+**Goal:** Never pay twice for the same LLM call.
+
+- `CachedLLMService` wraps any `ILLMService`, so the OpenRouter adapter needed no change.
+- Key = `sha256(model | temperature | max_tokens + system + prompt)`. Stored in SQLite at `.cache/llm_cache.db`, `CACHE_TTL_HOURS=24`.
+- **Safe by design:** the prompt contains the retrieved chunks, so a changed document → a different prompt → a cache miss. No manual invalidation is needed.
+- Empty answers and errors are never cached.
+- Turn it off with `--no-cache` or `CACHE_ENABLED=false`.
+
+| Run | Latency | Cost |
+|---|---|---|
+| 1st ask (miss) | 2,914 ms | $0.000024 |
+| 2nd ask (hit) | **287 ms** | **$0** |
+| Multi-query, 1st → 2nd | 5,727 → 2,120 ms | 2 calls → 0 |
+
+---
+
+## Step 21 — Metrics: Per-Request Monitoring (2026-11-08)
+
+**Goal:** Track tokens, cost, latency, errors and cache hits for **every request**, and read them back later.
+
+**Where the data is saved:** `logs/metrics.jsonl`, one JSON line per event, append-only. Every line has a `request_id` that groups the events of one command.
+```json
+{"time": "...", "request_id": "a1b2c3d4", "event": "llm", "name": "answer", "status": "ok", "model": "openai/gpt-oss-20b", "input_tokens": 563, "output_tokens": 130, "cost": 2.4e-05, "latency_ms": 1850}
+{"time": "...", "request_id": "a1b2c3d4", "event": "cache", "name": "answer", "hit": false}
+{"time": "...", "request_id": "a1b2c3d4", "event": "ask", "query": "How much...", "status": "ok", "found": true, "latency_ms": 2914, "mode": "hybrid", "cache": true}
+```
+- Tokens and **cost are the real values from OpenRouter** (`usage.include=true`), not estimates.
+- `IMetrics` interface → `JsonlMetrics` adapter. It can later be swapped for a Supabase table or Prometheus.
+
+**Reading it back:** `python main.py stats --last 10`
+```
+ask    requests 8 | errors 0 (0%) | rejected 0 | not_found 1 (12%) | p50_ms 818 | p95_ms 5727
+llm    calls 26 | errors 0 | fallbacks 0 | tokens_in 11442 | tokens_out 3448 | cost_usd 0.000947 | per_ask_usd 0.000022
+cache  lookups 54 | hits 29 | misses 25 | hit_rate 54%
+time 09:21:34 | command ask | status ok | ms 2914 | in 563 | out 130 | usd 0.000024 | cache 0 hit / 1 miss | query How much is the home office allowance?
+```
+
+**Also in LangSmith:** each `ask`/`search` trace gets `found` metadata → filter "not found" questions in the Monitor tab.
+
+**Lessons**
+- Latency is measured **after** model loading (about 5 s per CLI run), so the numbers show the real query time.
+- p95 matters more than the average: the slowest 5% is what users complain about.
+- Times are stored in UTC.
+
+---
+
+## Step 22 — Evaluation (2026-11-08)
+
+**Goal:** Measure quality with numbers, so every change can be compared.
+
+**Dataset:** `evaluation/dataset.json`, 12 cases:
+- 9 answerable (expected regex + source file + page)
+- 2 not in the documents
+- 1 department-isolation test (an HR question asked with `department=IT` → must be "not found")
+
+**Scores**
+| Score | Meaning |
+|---|---|
+| retrieved | the expected file **and page** are in the sources |
+| correct | the answer matches the expected regex, or is "not found" for unanswerable cases |
+| cited | the answer cites `[file, p.N]` exactly |
+
+**Run:** `python main.py evaluate [--multi-query] [--no-rerank] [--mode dense] [--no-cache]`
+
+| Config | Retrieval | Correct | Cited | Cost |
+|---|---|---|---|---|
+| Default (hybrid + rerank) | 9/9 | 11/12 (92%) | 7/9 (78%) | $0.00048 |
+| **+ multi-query** | 9/9 | **12/12 (100%)** | **9/9 (100%)** | $0.00031* |
+
+\* Part of that run was served from the cache.
+
+**Findings**
+- "Who handles a breach?" fails without multi-query, and is fixed with it.
+- Citation bug confirmed: the model cited **p.5** (the section number "5. Information Security") instead of p.2.
+- **Evaluate the evaluator:** one "failure" was a grader bug. The model wrote non-breaking spaces, so the answer text is now normalized with NFKC before matching.
+- A cached evaluation replays the same answers → use `--no-cache` to test the LLM itself.
+
+---
+
+## Step 23 — FastAPI + Rate Limiting with SlowAPI (2026-11-08)
+
+**Goal:** Serve the RAG system over HTTP, safely: API key, rate limits, clear error codes.
+
+```
+HTTP ─► middleware (X-Request-ID) ─► API key ─► SlowAPI limit ─► route ─► use cases (unchanged)
+CLI  ─────────────────────────────────────────────────────────────────►┘   both built by src/container.py
+```
+
+**Run:** `uvicorn src.api.app:app --reload` → Swagger UI at **http://127.0.0.1:8000/docs** (click **Authorize**, paste the key).
+
+**Endpoints**
+| Method | Path | Limit | Auth |
+|---|---|---|---|
+| GET | `/health` | – | public |
+| GET | `/ready` (Qdrant / Supabase / LLM checks → 503 if any is down) | – | public |
+| POST | `/ask` | `RATE_LIMIT_ASK=10/minute` | `X-API-Key` |
+| POST | `/search` | `RATE_LIMIT_SEARCH=30/minute` | `X-API-Key` |
+| POST | `/documents` (multipart: `department` + `file`) → 202, indexed in the background | `RATE_LIMIT_WRITE=5/minute` | `X-API-Key` |
+| GET | `/documents?status=`, `/documents/{dept}/{file}` | `RATE_LIMIT_READ=30/minute` | `X-API-Key` |
+| DELETE | `/documents/{dept}/{file}` | write | `X-API-Key` |
+| POST | `/documents/reconcile` | write | `X-API-Key` |
+| GET | `/stats?last=10` | read | `X-API-Key` |
+
+**Error mapping**
+| Case | HTTP |
+|---|---|
+| Missing / wrong API key | 401 |
+| Not a PDF (name or `%PDF-` bytes) | 415 |
+| File > `MAX_UPLOAD_MB` | 413 |
+| Bad input (empty query, `top_k` > 10, unknown department, > 2000 chars) | 422 (Pydantic) |
+| Over the token budget | 422 |
+| Rate limit | 429 + `Retry-After` |
+| Qdrant / LLM / Supabase down | 503 + `Retry-After: 30` |
+| Unexpected | 500 `Internal server error` (details in `logs/app.log`) |
+| Not found in the documents | 200 with `found: false`, and sources hidden |
+
+Every response has an `X-Request-ID` header, the same id found in `logs/metrics.jsonl`.
+
+**Refactor that made it possible**
+- `src/container.py` builds adapters **once** (lazily), shared by the CLI and the API. Models load at server start, not on every request.
+- `observe()` records metrics for both CLI and API (`channel: cli | api`).
+- `request_id` is a context variable, so each HTTP request gets its own id, even across threads.
+- Thread safety: SQLite cache (`check_same_thread=False` + lock), JSONL writer (lock), indexing (one run at a time).
+- Supabase network errors → `ServiceUnavailableError` → 503 instead of 500.
+- Upload now takes bytes, not a path, so the API passes the uploaded file directly.
+- `Answer.found` replaces string checks for "not found".
+
+**Rate limiting details**
+- Key = hash of the API key, or the client IP when no key is sent → each key has its own budget.
+- Storage `memory://` works for **one process only**. With several workers each one counts separately → use `RATE_LIMIT_STORAGE=redis://...`.
+- Requests that fail validation (422) never reach the limiter, so they are not counted.
+
+**Tests:** `python -m pytest tests -q` → **19 passed**. They use a fake container: no models, Qdrant, Supabase or LLM.
+
+**Live test (real server)**
+| Check | Result |
+|---|---|
+| `/ready` | qdrant ok, llm ok, supabase down (URL in `.env` still wrong) → 503 |
+| No key | 401 |
+| Ask #1 / #2 | 200 / 200 in **0.34 s** (cache hit) |
+| 301-token question | 422 |
+| `department=SALES` | 422 `unknown department, use one of: HR, IT` |
+| Upload | 503 `Supabase is unavailable (ConnectError)` |
+| 11th ask within a minute | **429**, `retry-after: 60` |
+| `/docs` | 200 |
+
+**Setup (user):** add to `.env`: `API_KEYS=<long random key>`. Several keys can be comma-separated.
+
+---
+
 ## Glossary
 
 | Term | Meaning |
@@ -773,6 +954,15 @@ upload ─► Supabase Storage (PDFs) + table "documents" (status) ─► index 
 | **Source of truth** | The one system whose data is authoritative; others (Qdrant) are rebuilt from it. |
 | **Reconcile** | Comparing two systems and fixing the differences. |
 | **Idempotent** | Running the same step twice gives the same result (safe to retry). |
+| **Fallback** | A backup model used when the primary one fails. |
+| **Cache hit / miss** | Hit = answer served from the cache (fast, free); miss = computed and then stored. |
+| **TTL** | Time-to-live: how long a cache entry stays valid. |
+| **p50 / p95** | Latency that 50% / 95% of requests stay under. |
+| **Evaluation dataset** | Questions with known answers used to score the system. |
+| **Rate limit** | Maximum number of requests per key/IP per time window (429 when exceeded). |
+| **Composition root / container** | The one place that builds all objects and wires them together. |
+| **Lifespan** | FastAPI startup/shutdown hook; here it loads the models once. |
+| **Request ID** | A unique id per request, used to connect the response, the logs and the metrics. |
 
 ---
 
@@ -785,7 +975,15 @@ upload ─► Supabase Storage (PDFs) + table "documents" (status) ─► index 
 - [x] Sync deletions → `delete` + `reconcile` with Supabase as the source of truth (Step 18).
 - [ ] Reconcile Storage files that have no row (Step 18 gap).
 - [ ] Supabase Auth + RLS policies per department.
-- [ ] Reliable citations: numbered sources `[1]`, mapped to file/page by code (Step 12 finding).
+- [ ] Reliable citations: numbered sources `[1]`, mapped to file/page by code (Step 12 finding, confirmed in Step 22: p.5 vs p.2).
+- [ ] Decide: make multi-query the default (Step 22: 12/12 vs 11/12).
+- [ ] Semantic answer cache in Qdrant (scoped by department, threshold ≥ 0.95, `index_version`).
+- [x] FastAPI + SlowAPI (Step 23).
+- [x] Hide sources when the answer is "not found" (API, Step 23).
+- [ ] Prometheus + Grafana (`/metrics` endpoint, alerts), Sentry (crashes).
+- [ ] Redis for rate limits when running several workers.
+- [ ] Supabase Auth: department taken from the user's login instead of the request body.
+- [ ] Move metrics from `logs/metrics.jsonl` to a Supabase table for shared dashboards.
 - [ ] Observability for real data: Langfuse self-hosted (Step 13 alternative).
 - [ ] Multi-query: rerank using the best score across all variants (Step 15 idea).
 - [ ] Make HNSW configurable (`HNSW_M`, `HNSW_EF_CONSTRUCT`, `HNSW_EF`) once the corpus grows past ~6,500 chunks (Step 16).

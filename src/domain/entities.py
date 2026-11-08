@@ -78,6 +78,7 @@ class Retrieval:
 class Answer:
     text: str
     sources: List[SearchResult]
+    found: bool = True
     queries: List[str] = field(default_factory=list)
     tokens: Dict[str, int] = field(default_factory=dict)
 

@@ -9,3 +9,8 @@ langchain-text-splitters
 tiktoken
 langsmith
 supabase
+fastapi
+uvicorn
+slowapi
+python-multipart
+pytest

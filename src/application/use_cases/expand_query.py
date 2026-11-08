@@ -1,3 +1,4 @@
+import logging
 import re
 from typing import List
 
@@ -15,6 +16,8 @@ Rules:
 - Output only the rewritten questions, one per line, without numbering."""
 
 LIST_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+
+logger = logging.getLogger(__name__)
 
 
 class ExpandQueryUseCase:
@@ -42,7 +45,8 @@ class ExpandQueryUseCase:
                 system=SYSTEM_PROMPT.format(count=self._max_variants),
                 name="expand_query",
             )
-        except Exception:
+        except Exception as error:
+            logger.warning("Query expansion failed, using the original question only: %s", error)
             return []
         return self._parse(output, question)
 

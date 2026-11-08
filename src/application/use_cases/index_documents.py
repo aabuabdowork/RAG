@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -8,6 +9,8 @@ from src.domain.entities import Document, DocumentEmbedding, DocumentStatus
 from src.domain.interfaces.document_repository import IDocumentRepository
 from src.domain.interfaces.object_storage import IObjectStorage
 from src.domain.interfaces.vector_store import IVectorStore
+
+logger = logging.getLogger(__name__)
 
 
 class IndexDocumentsUseCase:
@@ -38,6 +41,7 @@ class IndexDocumentsUseCase:
             self._store.delete_document(document.id)
             self._store.upsert(embeddings)
         except Exception as error:
+            logger.warning("Indexing %s failed: %s", document.key, error)
             self._repository.save(replace(document, status=DocumentStatus.FAILED, error=str(error)))
             return f"failed ({error})"
 

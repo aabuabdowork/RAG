@@ -1,11 +1,14 @@
 import hashlib
 import uuid
 from pathlib import Path
-from typing import Union
 
 from src.domain.entities import Document, DocumentStatus
 from src.domain.interfaces.document_repository import IDocumentRepository
 from src.domain.interfaces.object_storage import IObjectStorage
+
+
+def document_id(department: str, file_name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{department.upper()}/{file_name}"))
 
 
 class UploadDocumentUseCase:
@@ -13,22 +16,20 @@ class UploadDocumentUseCase:
         self._repository = repository
         self._storage = storage
 
-    def execute(self, file_path: Union[str, Path], department: str) -> str:
-        path = Path(file_path)
+    def execute(self, file_name: str, data: bytes, department: str) -> str:
         department = department.upper()
-        data = path.read_bytes()
         doc_hash = hashlib.sha256(data).hexdigest()
 
-        existing = self._repository.get(department, path.name)
+        existing = self._repository.get(department, file_name)
         if existing and existing.doc_hash == doc_hash and existing.status != DocumentStatus.FAILED:
             return "skipped"
 
-        document_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{department}/{path.name}"))
+        identifier = document_id(department, file_name)
         document = Document(
-            id=document_id,
+            id=identifier,
             department=department,
-            file_name=path.name,
-            storage_path=f"{department}/{document_id}{path.suffix.lower()}",
+            file_name=file_name,
+            storage_path=f"{department}/{identifier}{Path(file_name).suffix.lower()}",
             doc_hash=doc_hash,
         )
         self._storage.upload(document.storage_path, data)

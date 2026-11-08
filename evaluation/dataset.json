@@ -1,0 +1,14 @@
+[
+  {"question": "How many days per week can employees work remotely?", "expected": "\\b(3|three)\\b", "source": "HR/remote_work_policy.pdf", "page": 1},
+  {"question": "What are the core hours for remote employees?", "expected": "10(:00)?\\s*AM", "source": "HR/remote_work_policy.pdf", "page": 1},
+  {"question": "How much is the home office allowance?", "expected": "1,?500", "source": "HR/remote_work_policy.pdf", "page": 2},
+  {"question": "How long do I have to submit receipts?", "expected": "\\b30\\b", "source": "HR/remote_work_policy.pdf", "page": 2},
+  {"question": "Who handles a breach?", "expected": "security@falcontech\\.example", "source": "HR/remote_work_policy.pdf", "page": 2},
+  {"question": "Is multi-factor authentication required?", "expected": "\\b(yes|mandatory|required)\\b", "source": "HR/remote_work_policy.pdf", "page": 2},
+  {"question": "When does the current policy version take effect?", "expected": "1 January 2026|January 1,? 2026", "source": "HR/remote_work_policy.pdf", "page": 3},
+  {"question": "How often are one-to-one meetings held?", "expected": "(two|2) weeks|bi-?weekly", "source": "HR/remote_work_policy.pdf", "page": 3},
+  {"question": "What is the IT sample document used for?", "expected": "test|extraction", "source": "IT/sample.pdf", "page": 1, "department": "IT"},
+  {"question": "How many days of annual leave do employees get?"},
+  {"question": "What is the parental leave policy?"},
+  {"question": "How much is the home office allowance?", "department": "IT"}
+]

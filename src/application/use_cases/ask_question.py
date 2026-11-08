@@ -63,13 +63,14 @@ class AskQuestionUseCase:
             return Answer(
                 text=NOT_FOUND,
                 sources=[],
+                found=False,
                 queries=retrieval.queries,
                 tokens={"question": question_tokens},
             )
 
         context = "\n\n".join(self._format(source) for source in sources)
         user_prompt = USER_PROMPT.format(context=context, question=strip_tags(question))
-        text = self._llm.generate(user_prompt, system=SYSTEM_PROMPT, name="answer").strip()
+        text = self._llm.generate(user_prompt, system=SYSTEM_PROMPT, name="answer").strip() or NOT_FOUND
 
         tokens = {
             "rules": self._counter.count(SYSTEM_PROMPT),
@@ -77,7 +78,13 @@ class AskQuestionUseCase:
             "context": self._counter.count(context),
             "answer": self._counter.count(text),
         }
-        return Answer(text=text, sources=sources, queries=retrieval.queries, tokens=tokens)
+        return Answer(
+            text=text,
+            sources=sources,
+            found=NOT_FOUND not in text,
+            queries=retrieval.queries,
+            tokens=tokens,
+        )
 
     def _fit_budget(self, sources: List[SearchResult]) -> List[SearchResult]:
         kept: List[SearchResult] = []

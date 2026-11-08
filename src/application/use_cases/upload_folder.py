@@ -16,7 +16,7 @@ class UploadFolderUseCase:
             for path in sorted(department_dir.rglob(self._pattern)):
                 key = f"{department_dir.name.upper()}/{path.name}"
                 try:
-                    results[key] = self._upload.execute(path, department=department_dir.name)
+                    results[key] = self._upload.execute(path.name, path.read_bytes(), department_dir.name)
                 except Exception as error:
                     results[key] = f"failed ({error})"
         return results

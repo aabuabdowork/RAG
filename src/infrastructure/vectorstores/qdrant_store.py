@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from langsmith import traceable
 from qdrant_client import QdrantClient
+from qdrant_client.http.exceptions import ResponseHandlingException
 from qdrant_client.models import (
     Distance,
     Document,
@@ -22,6 +23,7 @@ from qdrant_client.models import (
 
 from src.core.config import settings
 from src.domain.entities import DocumentEmbedding, SearchMode, SearchResult
+from src.domain.exceptions import ServiceUnavailableError
 from src.domain.interfaces.vector_store import IVectorStore
 
 DENSE = "dense"
@@ -41,11 +43,15 @@ class QdrantVectorStore(IVectorStore):
         url: str = settings.qdrant_url,
         collection_name: str = settings.qdrant_collection,
         prefetch_limit: int = settings.prefetch_limit,
+        timeout: int = settings.qdrant_timeout,
     ) -> None:
-        self._client = QdrantClient(url=url, cloud_inference=True)
+        self._client = QdrantClient(url=url, cloud_inference=True, timeout=timeout)
         self._collection = collection_name
         self._prefetch_limit = prefetch_limit
-        self._ensure_collection(dimension)
+        try:
+            self._ensure_collection(dimension)
+        except ResponseHandlingException as error:
+            raise ServiceUnavailableError("Qdrant", error) from error
 
     @traceable(name="qdrant_search", run_type="retriever", process_inputs=without_vectors)
     def search(
