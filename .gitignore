@@ -2,6 +2,11 @@
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+service-account*.json
 
 # Python
 __pycache__/
@@ -10,6 +15,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 # Virtual environments
 venv/
@@ -20,6 +27,10 @@ env/
 .cache/
 chroma_db/
 *.faiss
+huggingface/
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE / OS
 .vscode/
@@ -29,3 +40,12 @@ Thumbs.db
 
 # Logs and metrics
 logs/
+*.log
+*.jsonl
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Personal notes
+TRAINING_LOG.md

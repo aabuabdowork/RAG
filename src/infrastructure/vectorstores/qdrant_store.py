@@ -41,11 +41,12 @@ class QdrantVectorStore(IVectorStore):
         self,
         dimension: int,
         url: str = settings.qdrant_url,
+        api_key: str = settings.qdrant_api_key,
         collection_name: str = settings.qdrant_collection,
         prefetch_limit: int = settings.prefetch_limit,
         timeout: int = settings.qdrant_timeout,
     ) -> None:
-        self._client = QdrantClient(url=url, cloud_inference=True, timeout=timeout)
+        self._client = QdrantClient(url=url, api_key=api_key or None, cloud_inference=True, timeout=timeout)
         self._collection = collection_name
         self._prefetch_limit = prefetch_limit
         try:

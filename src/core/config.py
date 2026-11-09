@@ -34,6 +34,7 @@ class Settings:
     llm_max_retries: int = int(os.getenv("LLM_MAX_RETRIES", "2"))
     default_embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     qdrant_url: str = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+    qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
     qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "langchain_rag")
     qdrant_timeout: int = int(os.getenv("QDRANT_TIMEOUT", "10"))
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "800"))
@@ -56,6 +57,7 @@ class Settings:
     multi_query_candidates: int = int(os.getenv("MULTI_QUERY_CANDIDATES", "10"))
     cache_enabled: bool = os.getenv("CACHE_ENABLED", "true").lower() == "true"
     cache_ttl_hours: float = float(os.getenv("CACHE_TTL_HOURS", "24"))
+    api_docs: bool = os.getenv("API_DOCS", "true").lower() == "true"
     api_keys: Tuple[str, ...] = tuple(key.strip() for key in os.getenv("API_KEYS", "").split(",") if key.strip())
     departments: Tuple[str, ...] = tuple(
         name.strip().upper() for name in os.getenv("DEPARTMENTS", "HR,IT").split(",") if name.strip()

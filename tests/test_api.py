@@ -1,6 +1,8 @@
 import os
 
-os.environ.update(API_KEYS="test-key", RATE_LIMIT_ASK="3/minute", MAX_UPLOAD_MB="1")
+os.environ.update(RATE_LIMIT_ASK="3/minute", MAX_UPLOAD_MB="1")
+
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +12,7 @@ from src.api.dependencies import get_container, limiter
 from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.metrics_report import MetricsReportUseCase
 from src.application.use_cases.upload_document import UploadDocumentUseCase
+from src.core.config import settings
 from src.domain.entities import Answer, Retrieval, SearchResult
 from src.domain.exceptions import BudgetExceededError, ServiceUnavailableError
 
@@ -87,7 +90,8 @@ class FakeContainer:
 
 
 @pytest.fixture
-def setup():
+def setup(monkeypatch):
+    monkeypatch.setattr("src.api.dependencies.settings", replace(settings, api_keys=("test-key",)))
     fake = FakeContainer()
     app.dependency_overrides[get_container] = lambda: fake
     limiter.reset()

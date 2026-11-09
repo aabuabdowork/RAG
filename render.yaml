@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: langchain-rag-api
+    runtime: python
+    plan: standard
+    region: frankfurt
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /health
+    buildCommand: >-
+      pip install --upgrade pip &&
+      pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
+      pip install -r requirements.txt &&
+      python -c "from sentence_transformers import SentenceTransformer, CrossEncoder;
+      SentenceTransformer('all-MiniLM-L6-v2'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+    startCommand: uvicorn src.api.app:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      - key: HF_HOME
+        value: /opt/render/project/src/.cache/huggingface
+      - key: LOG_DIR
+        value: /var/data/logs
+      - key: CACHE_DIR
+        value: /var/data/cache
+      - key: API_DOCS
+        value: "false"
+      - key: LANGSMITH_TRACING
+        value: "false"
+      - key: API_KEYS
+        generateValue: true
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

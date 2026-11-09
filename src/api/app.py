@@ -31,7 +31,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="LangChain RAG API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="LangChain RAG API",
+    version="1.0.0",
+    lifespan=lifespan,
+    openapi_url="/openapi.json" if settings.api_docs else None,
+)
 app.state.limiter = limiter
 
 protected = [Depends(require_api_key)]
