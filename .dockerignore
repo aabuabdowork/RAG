@@ -1,0 +1,12 @@
+.env
+.env.*
+.git
+.cache
+.vscode
+.pytest_cache
+**/__pycache__
+logs
+departments
+evaluation
+tests
+TRAINING_LOG.md
