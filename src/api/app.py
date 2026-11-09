@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="LangChain RAG API",
-    version="1.0.0",
+    version=settings.app_version,
     lifespan=lifespan,
     openapi_url="/openapi.json" if settings.api_docs else None,
 )

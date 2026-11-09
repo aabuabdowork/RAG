@@ -25,6 +25,9 @@ load_dotenv(BASE_DIR / ".env", override=True)
 
 @dataclass(frozen=True)
 class Settings:
+    app_env: str = os.getenv("APP_ENV", "development")
+    app_version: str = os.getenv("APP_VERSION", "1.0.0")
+    git_commit: str = os.getenv("RENDER_GIT_COMMIT", "local")[:7]
     openai_api_key: str = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY", "")
     openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     default_model: str = os.getenv("DEFAULT_MODEL", "openai/gpt-oss-20b")

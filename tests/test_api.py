@@ -61,11 +61,20 @@ class Memory:
     def delete_document(self, document_id):
         return 1
 
+    def count(self):
+        return len(self.items)
+
+
+class Down:
+    def count(self):
+        raise ConnectionError()
+
 
 class FakeContainer:
     def __init__(self):
         self.metrics = Memory()
         self.repository = Memory()
+        self.store = Memory()
         self.answer = Answer("It is 1,500 SAR. [HR/policy.pdf, p.2]", [SOURCE], True, ["q"], {"answer": 9})
         self.indexed = 0
 
@@ -103,9 +112,21 @@ def ask(client, body=None, headers=KEY):
     return client.post("/ask", json=body or {"query": "allowance?"}, headers=headers)
 
 
-def test_health_is_public(setup):
+def test_health_is_public_and_reports_checks(setup):
     client, _ = setup
-    assert client.get("/health").json() == {"status": "ok"}
+    body = client.get("/health").json()
+    assert {"status", "environment", "version", "commit", "checks"} <= body.keys()
+    assert body["version"] == settings.app_version
+    assert body["checks"]["qdrant"] == "ok" and body["checks"]["supabase"] == "ok"
+
+
+def test_health_degrades_but_ready_fails(setup):
+    client, fake = setup
+    fake.store = Down()
+    health, ready = client.get("/health"), client.get("/ready")
+    assert health.status_code == 200 and health.json()["status"] == "degraded"
+    assert health.json()["checks"]["qdrant"] == "down (ConnectionError)"
+    assert ready.status_code == 503
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong"}])

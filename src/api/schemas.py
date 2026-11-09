@@ -85,6 +85,14 @@ class DocumentOut(BaseModel):
         )
 
 
+class HealthResponse(BaseModel):
+    status: str
+    environment: str
+    version: str
+    commit: str
+    checks: Dict[str, str]
+
+
 class UploadResponse(BaseModel):
     id: str
     document: str

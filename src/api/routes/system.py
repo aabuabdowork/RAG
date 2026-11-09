@@ -1,8 +1,10 @@
-from typing import Callable, Dict
+from typing import Callable
 
 from fastapi import APIRouter, Response
 
 from src.api.dependencies import ContainerDep
+from src.api.schemas import HealthResponse
+from src.container import Container
 from src.core.config import settings
 from src.domain.entities import DocumentStatus
 
@@ -17,18 +19,30 @@ def check(probe: Callable[[], object]) -> str:
         return f"down ({type(error).__name__})"
 
 
-@router.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok"}
-
-
-@router.get("/ready")
-def ready(container: ContainerDep, response: Response) -> Dict[str, str]:
+def report(container: Container) -> HealthResponse:
     checks = {
-        "qdrant": check(lambda: container.store.count()),
+        "qdrant": check(container.store.count),
         "supabase": check(lambda: container.repository.list(DocumentStatus.FAILED)),
-        "llm": "ok" if settings.openai_api_key else "down (no API key)",
+        "llm": "ok" if settings.openai_api_key else "missing (OPENROUTER_API_KEY)",
+        "api_keys": "ok" if settings.api_keys else "missing (API_KEYS)",
     }
-    if any(value != "ok" for value in checks.values()):
+    return HealthResponse(
+        status="ok" if all(value == "ok" for value in checks.values()) else "degraded",
+        environment=settings.app_env,
+        version=settings.app_version,
+        commit=settings.git_commit,
+        checks=checks,
+    )
+
+
+@router.get("/health", response_model=HealthResponse)
+def health(container: ContainerDep) -> HealthResponse:
+    return report(container)
+
+
+@router.get("/ready", response_model=HealthResponse)
+def ready(container: ContainerDep, response: Response) -> HealthResponse:
+    result = report(container)
+    if result.status != "ok":
         response.status_code = 503
-    return checks
+    return result

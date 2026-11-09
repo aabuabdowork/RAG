@@ -8,6 +8,8 @@ services:
     autoDeploy: true
     healthCheckPath: /health
     envVars:
+      - key: APP_ENV
+        value: production
       - key: API_DOCS
         value: "true"
       - key: LANGSMITH_TRACING
