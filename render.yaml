@@ -9,7 +9,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: API_DOCS
-        value: "false"
+        value: "true"
       - key: LANGSMITH_TRACING
         value: "false"
       - key: API_KEYS
